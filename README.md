@@ -25,6 +25,26 @@ CERTIFY-BTC is designed around answering those four questions.
 
 ---
 
+## Results (Nickparvar test set, 1,578 images)
+
+Full local run on an RTX 4050 (all Nickparvar, 15 + 12 epochs). See
+[`notebooks/03_results.ipynb`](notebooks/03_results.ipynb).
+
+| | HXAI-BTC (baseline) | CERTIFY-BTC |
+|---|---|---|
+| Test accuracy | 93.28% | **93.66%** |
+| glioma recall | 0.822 | 0.795 *(→ 0.841 at a sensitivity-tuned operating point)* |
+| meningioma recall | 0.910 | **0.948** |
+| pituitary recall | 0.990 | **0.998** |
+
+**The certification layer** — the contribution beyond raw accuracy:
+- Misclassified gliomas carry **2.8×** the uncertainty of correct ones — errors are flagged, not silent.
+- The **95% conformal set** lifts glioma coverage from 0.80 (top-1) to **0.90**.
+- **Mahalanobis OOD** rejects out-of-distribution inputs at **AUROC ≈ 1.0** (energy score fails here).
+
+Glioma's top-1 recall reflects a train→test distribution shift on this dataset (the baseline hit
+the same wall); multi-dataset + domain-adversarial training (Figshare/BraTS, cloud) is the next step.
+
 ## Target architecture
 
 Built in **verifiable phases** (see roadmap) — not all of this exists yet.
@@ -171,7 +191,7 @@ The project is built one verifiable phase at a time; each must run on the RTX 40
 - [x] **Phase 5** — `domain_adversarial.py` (GRL + domain head) + Stage-2 loop (`train.py --stage 2`); mechanism verified locally, real multi-dataset on cloud
 - [x] **Phase 6** — `uncertainty.py` (Evidential DL + MC-Dropout) + `conformal.py` (RAPS) + `ood.py` (energy); OOD needs the fully-trained model to validate
 - [x] **Phase 7** — `xai.py` (Grad-CAM + LIME consensus + Dice; SHAP cloud-only on 6GB) + `counterfactual.py`
-- [ ] **Phase 8** — full results notebook + ablation study *(needs the full training run)*
+- [x] **Phase 8** — `03_results.ipynb`: ablation + confusion matrix + certification analysis (uncertainty, conformal, Mahalanobis OOD) + operating point
 
 ---
 

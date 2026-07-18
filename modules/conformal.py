@@ -88,6 +88,53 @@ def coverage_and_size(sets, labels):
     return covered / len(labels), avg_size
 
 
+class MondrianConformalRAPS:
+    """Class-CONDITIONAL RAPS. Standard conformal guarantees coverage *overall*; a hard class
+    (glioma) can still be under-covered. Mondrian calibrates a SEPARATE threshold per class,
+    so each class — including glioma — gets its own >= (1-alpha) coverage guarantee. The price
+    is somewhat larger sets for the hard classes."""
+
+    def __init__(self, coverage=0.95, lam=0.01, k_reg=1, randomized=True, seed=0):
+        self.alpha = 1.0 - coverage
+        self.lam = lam
+        self.k_reg = k_reg
+        self.randomized = randomized
+        self.rng = np.random.default_rng(seed)
+        self.tau = None
+        self.num_classes = None
+
+    def _score(self, prob_row, label, u=None):
+        """RAPS nonconformity score of `label` for one probability row."""
+        order = np.argsort(-prob_row)
+        rank = int(np.where(order == label)[0][0])        # 0-indexed rank of `label`
+        cumulative = prob_row[order][:rank + 1].sum()      # includes `label`'s prob
+        reg = self.lam * max(0, (rank + 1) - self.k_reg)
+        if self.randomized:
+            u = self.rng.random() if u is None else u
+            cumulative -= u * prob_row[order][rank]
+        return cumulative + reg
+
+    def calibrate(self, probs, labels):
+        probs, labels = np.asarray(probs), np.asarray(labels)
+        self.num_classes = probs.shape[1]
+        self.tau = np.zeros(self.num_classes)
+        for c in range(self.num_classes):
+            idx = np.where(labels == c)[0]                 # calibrate class c on its OWN samples
+            scores = np.array([self._score(probs[i], c) for i in idx])
+            n = len(scores)
+            q = min(1.0, np.ceil((n + 1) * (1 - self.alpha)) / n)
+            self.tau[c] = float(np.quantile(scores, q, method="higher"))
+        return self.tau
+
+    def predict(self, probs):
+        probs = np.asarray(probs)
+        sets = []
+        for i in range(len(probs)):
+            s = [k for k in range(self.num_classes) if self._score(probs[i], k) <= self.tau[k]]
+            sets.append(sorted(s) if s else [int(probs[i].argmax())])  # never emit an empty set
+        return sets
+
+
 if __name__ == "__main__":
     import torch
     import torch.nn.functional as F

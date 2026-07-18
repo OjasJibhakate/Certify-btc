@@ -38,6 +38,39 @@ def is_ood(energies, threshold):
     return np.asarray(energies) > threshold
 
 
+class MahalanobisOOD:
+    """Feature-distance OOD detector (Lee et al. 2018). Energy fails on pure noise because the
+    model is overconfident there; Mahalanobis instead asks 'how far is this sample's FEATURE
+    vector from the training feature distribution?'. Noise lands far from every class cluster,
+    so it's flagged even when the logits are (wrongly) huge.
+
+    Fit class means + a shared (pooled) covariance on in-distribution features; score = the
+    minimum Mahalanobis distance to any class centroid (higher = more OOD)."""
+
+    def __init__(self, shrinkage=1e-2):
+        self.shrinkage = shrinkage
+        self.means = None
+        self.inv_cov = None
+        self.classes = None
+
+    def fit(self, features, labels):
+        features, labels = np.asarray(features), np.asarray(labels)
+        self.classes = np.unique(labels)
+        self.means = {int(c): features[labels == c].mean(0) for c in self.classes}
+        centered = np.concatenate([features[labels == c] - self.means[int(c)] for c in self.classes])
+        cov = np.cov(centered.T) + self.shrinkage * np.eye(features.shape[1])  # shrinkage = stable inverse
+        self.inv_cov = np.linalg.inv(cov)
+        return self
+
+    def score(self, features):
+        features = np.asarray(features)
+        dists = np.stack([
+            (((features - self.means[int(c)]) @ self.inv_cov) * (features - self.means[int(c)])).sum(1)
+            for c in self.classes
+        ], axis=1)
+        return dists.min(axis=1)   # distance to the NEAREST class cluster
+
+
 if __name__ == "__main__":
     from sklearn.metrics import roc_auc_score
     from modules.model import CertifyBTC
