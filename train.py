@@ -1,26 +1,26 @@
 """
-train.py — Stage-1 training loop for CERTIFY-BTC (Phase 3).
+train.py — two-stage training for CERTIFY-BTC (Phases 3 & 5).
 
-Stage 1 (from config.STAGE1): freeze EfficientNetB4, train only CBAM + fusion + head with
-Adam (lr 1e-3), Focal Loss (glioma weight 2.0), and a cosine LR schedule.
+  Stage 1 (python train.py            or  --stage 1):
+      freeze EfficientNetB4, train CBAM + fusion + head. Adam 1e-3, Focal Loss (glioma 2.0),
+      cosine LR.
+  Stage 2 (python train.py --stage 2):
+      resume Stage 1, unfreeze the last 2 blocks (lr 1e-4), and add domain-adversarial training
+      (Gradient Reversal + domain head, alpha ramps 0 -> 1) for multi-site robustness.
 
-Built for a 6GB GPU:
-  - Automatic Mixed Precision (fp16) halves the memory of activations.
-  - Gradient accumulation makes ACCUM_STEPS small batches act like one big batch, so the
-    effective batch size is BATCH_SIZE * ACCUM_STEPS without the memory cost.
-  - A checkpoint is saved EVERY epoch to checkpoints/ (never lose a run again).
-
-Run it:  python train.py
-In local mode this does a fast 2-epoch smoke run on ~200 images.
+Built for a 6GB GPU: Automatic Mixed Precision (fp16) + gradient accumulation
+(effective batch = BATCH_SIZE * ACCUM_STEPS). A checkpoint is saved EVERY epoch.
 """
 
 import os
 import sys
 import time
 import random
+import argparse
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
@@ -28,6 +28,7 @@ import config
 from modules.datasets import build_dataloaders
 from modules.model import CertifyBTC, count_params
 from modules.losses import FocalLoss
+from modules.domain_adversarial import DomainClassifier, grl_alpha
 
 
 def set_seed(seed):
@@ -55,7 +56,7 @@ def load_checkpoint(path, model, optimizer=None, device=None):
 
 
 def _autocast(device):
-    """Context manager for mixed precision — enabled only on CUDA in local/cloud config."""
+    """Mixed-precision context — enabled only on CUDA per config."""
     use_amp = config.USE_AMP and device == "cuda"
     return torch.autocast(device_type="cuda" if device == "cuda" else "cpu", enabled=use_amp)
 
@@ -86,6 +87,9 @@ def evaluate(model, loader, loss_fn, device):
     return total_loss / max(n, 1), acc, per_acc
 
 
+# ---------------------------------------------------------------------------
+# STAGE 1
+# ---------------------------------------------------------------------------
 def train_one_epoch(model, loader, loss_fn, optimizer, scaler, device, accum_steps):
     """One pass over the training data with AMP + gradient accumulation."""
     model.train()
@@ -96,74 +100,158 @@ def train_one_epoch(model, loader, loss_fn, optimizer, scaler, device, accum_ste
         x, y = x.to(device), y.to(device)
         with _autocast(device):
             logits = model(x)
-            # Divide by accum_steps so the summed gradients equal one big-batch gradient.
-            loss = loss_fn(logits, y) / accum_steps
+            loss = loss_fn(logits, y) / accum_steps  # scale so summed grads == big-batch grad
         scaler.scale(loss).backward()
-
-        # Step once every accum_steps batches (and flush any remainder at the end).
         if (i + 1) % accum_steps == 0 or (i + 1) == n_batches:
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
-
-        running += loss.item() * accum_steps * x.size(0)  # undo the division for reporting
+        running += loss.item() * accum_steps * x.size(0)
         n += x.size(0)
     return running / max(n, 1)
 
 
-def main():
+def train_stage1():
     set_seed(config.SEED)
     device = config.DEVICE
-    print(f"Device: {device} | MACHINE={config.MACHINE} | AMP={config.USE_AMP and device=='cuda'}")
-    print(f"Effective batch = {config.BATCH_SIZE} x {config.ACCUM_STEPS} accum "
+    print(f"[Stage 1] Device: {device} | MACHINE={config.MACHINE} | "
+          f"AMP={config.USE_AMP and device=='cuda'}")
+    print(f"Effective batch = {config.BATCH_SIZE} x {config.ACCUM_STEPS} "
           f"= {config.BATCH_SIZE * config.ACCUM_STEPS}\n")
 
-    train_loader, val_loader, _test_loader = build_dataloaders()
+    train_loader, val_loader, _ = build_dataloaders()
 
     model = CertifyBTC().to(device)
-    model.freeze_backbone(True)  # Stage 1: only CBAM + fusion + head train
+    model.freeze_backbone(True)
     total, trainable = count_params(model)
     print(f"\nParams: {total:,} total | {trainable:,} trainable (backbone frozen)\n")
 
     alpha = torch.tensor(config.CLASS_WEIGHTS_LIST, device=device)
     loss_fn = FocalLoss(alpha=alpha, gamma=config.FOCAL_GAMMA)
 
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = Adam(trainable_params, lr=config.STAGE1["lr"])
+    optimizer = Adam([p for p in model.parameters() if p.requires_grad], lr=config.STAGE1["lr"])
     scheduler = CosineAnnealingLR(optimizer, T_max=config.STAGE1_EPOCHS)
     scaler = torch.amp.GradScaler("cuda", enabled=config.USE_AMP and device == "cuda")
 
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     best_val = -1.0
-
     for epoch in range(1, config.STAGE1_EPOCHS + 1):
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, loss_fn, optimizer, scaler,
                                      device, config.ACCUM_STEPS)
         val_loss, val_acc, per_acc = evaluate(model, val_loader, loss_fn, device)
         scheduler.step()
-
         pca = "  ".join(f"{config.CLASS_NAMES[c][:5]}={per_acc[c]:.2f}"
                         for c in range(config.NUM_CLASSES))
         print(f"epoch {epoch}/{config.STAGE1_EPOCHS} ({time.time()-t0:.0f}s) | "
               f"train {train_loss:.4f} | val {val_loss:.4f} acc {val_acc:.3f} | {pca}")
+        _save_epoch(model, optimizer, epoch, val_acc, "stage1", best_val)
+        best_val = max(best_val, val_acc)
+    print(f"\n[Stage 1] complete. Best val acc: {best_val:.3f}")
 
-        ckpt = {
-            "epoch": epoch,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "val_acc": val_acc,
-            "machine": config.MACHINE,
-        }
-        save_checkpoint(ckpt, os.path.join(config.CHECKPOINT_DIR, f"stage1_epoch{epoch}.pth"))
-        if val_acc >= best_val:
-            best_val = val_acc
-            save_checkpoint(ckpt, os.path.join(config.CHECKPOINT_DIR, "stage1_best.pth"))
-            print(f"   -> new best (val acc {val_acc:.3f}) saved to stage1_best.pth")
 
-    print(f"\nStage 1 complete. Best val acc: {best_val:.3f}")
-    print(f"Checkpoints in: {config.CHECKPOINT_DIR}")
+# ---------------------------------------------------------------------------
+# STAGE 2 (domain-adversarial)
+# ---------------------------------------------------------------------------
+def train_stage2(num_domains=2):
+    set_seed(config.SEED)
+    device = config.DEVICE
+    print(f"[Stage 2] Device: {device} | domain-adversarial (GRL) | "
+          f"unfreeze last {config.STAGE2['unfreeze_last_blocks']} blocks\n")
+
+    train_loader, val_loader, _ = build_dataloaders()
+
+    model = CertifyBTC().to(device)
+    ckpt_path = os.path.join(config.CHECKPOINT_DIR, "stage1_best.pth")
+    if os.path.exists(ckpt_path):
+        load_checkpoint(ckpt_path, model, device=device)
+        print(f"Resumed from {ckpt_path}")
+    else:
+        print("No Stage-1 checkpoint found — training Stage 2 from ImageNet init.")
+    model.unfreeze_last_blocks(config.STAGE2["unfreeze_last_blocks"])
+
+    # NOTE: with one dataset (local) there is only one real domain, so we SIMULATE `num_domains`
+    # domains to exercise the machinery. On the cloud, domain labels come from the datasets.
+    domain_clf = DomainClassifier(in_dim=512, num_domains=num_domains).to(device)
+    print("(!) LOCAL mechanism check: domains are SIMULATED — real domains need >=2 datasets.")
+
+    class_loss_fn = FocalLoss(alpha=torch.tensor(config.CLASS_WEIGHTS_LIST, device=device),
+                              gamma=config.FOCAL_GAMMA)
+    domain_loss_fn = nn.CrossEntropyLoss()
+
+    params = [p for p in model.parameters() if p.requires_grad] + list(domain_clf.parameters())
+    optimizer = Adam(params, lr=config.STAGE2["lr"])
+    scheduler = CosineAnnealingLR(optimizer, T_max=config.STAGE2_EPOCHS)
+    scaler = torch.amp.GradScaler("cuda", enabled=config.USE_AMP and device == "cuda")
+
+    total, trainable = count_params(model)
+    print(f"Params: {total:,} total | {trainable:,} trainable (last blocks unfrozen)\n")
+
+    os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
+    total_steps = config.STAGE2_EPOCHS * len(train_loader)
+    best_val = -1.0
+
+    for epoch in range(1, config.STAGE2_EPOCHS + 1):
+        model.train(); domain_clf.train()
+        c_run, d_run, n, d_correct = 0.0, 0.0, 0, 0
+        optimizer.zero_grad(set_to_none=True)
+        nb = len(train_loader)
+        alpha = 0.0
+        for i, (x, y) in enumerate(train_loader):
+            x, y = x.to(device), y.to(device)
+            # Simulated domain labels for the local mechanism check.
+            d = torch.randint(0, num_domains, (x.size(0),), device=device)
+            # Ramp alpha 0 -> 1 across the whole run (per-step so it moves even in a 1-epoch run).
+            alpha = grl_alpha((epoch - 1) * nb + i, total_steps)
+
+            with _autocast(device):
+                logits, fused, _ = model(x, return_maps=True)
+                class_loss = class_loss_fn(logits, y)
+                domain_logits = domain_clf(fused, alpha=alpha)
+                domain_loss = domain_loss_fn(domain_logits, d)
+                loss = (class_loss + domain_loss) / config.ACCUM_STEPS
+            scaler.scale(loss).backward()
+            if (i + 1) % config.ACCUM_STEPS == 0 or (i + 1) == nb:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+
+            c_run += class_loss.item() * x.size(0)
+            d_run += domain_loss.item() * x.size(0)
+            d_correct += int((domain_logits.argmax(1) == d).sum())
+            n += x.size(0)
+
+        scheduler.step()
+        val_loss, val_acc, per_acc = evaluate(model, val_loader, class_loss_fn, device)
+        pca = "  ".join(f"{config.CLASS_NAMES[c][:5]}={per_acc[c]:.2f}"
+                        for c in range(config.NUM_CLASSES))
+        print(f"epoch {epoch}/{config.STAGE2_EPOCHS} | alpha {alpha:.2f} | "
+              f"class {c_run/n:.4f}  domain {d_run/n:.4f} (dom_acc {d_correct/n:.2f}) | "
+              f"val acc {val_acc:.3f} | {pca}")
+        _save_epoch(model, optimizer, epoch, val_acc, "stage2", best_val,
+                    extra={"domain_clf": domain_clf.state_dict()})
+        best_val = max(best_val, val_acc)
+
+    print(f"\n[Stage 2] complete. Best val acc: {best_val:.3f}")
+    print("(dom_acc near 1/num_domains means domains are indistinguishable — the GOAL. Here it's "
+          "simulated, so treat this as a plumbing check only.)")
+
+
+# ---------------------------------------------------------------------------
+def _save_epoch(model, optimizer, epoch, val_acc, tag, best_val, extra=None):
+    ckpt = {"epoch": epoch, "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(), "val_acc": val_acc, "machine": config.MACHINE}
+    if extra:
+        ckpt.update(extra)
+    save_checkpoint(ckpt, os.path.join(config.CHECKPOINT_DIR, f"{tag}_epoch{epoch}.pth"))
+    if val_acc >= best_val:
+        save_checkpoint(ckpt, os.path.join(config.CHECKPOINT_DIR, f"{tag}_best.pth"))
+        print(f"   -> new best (val acc {val_acc:.3f}) saved to {tag}_best.pth")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="CERTIFY-BTC training")
+    ap.add_argument("--stage", type=int, default=1, choices=[1, 2],
+                    help="1 = frozen backbone (Focal); 2 = unfreeze + domain-adversarial")
+    args = ap.parse_args()
+    (train_stage1 if args.stage == 1 else train_stage2)()

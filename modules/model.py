@@ -88,9 +88,23 @@ class CertifyBTC(nn.Module):
 
     def freeze_backbone(self, freeze=True):
         """Stage 1 freezes EfficientNet; CBAM + fusion + head stay trainable.
-        Stage 2 (Phase 3+) will unfreeze the last blocks."""
+        Stage 2 unfreezes the last blocks via unfreeze_last_blocks()."""
         for p in self.features.parameters():
             p.requires_grad = not freeze
+
+    def unfreeze_last_blocks(self, n=2):
+        """Stage 2: unfreeze only the last n EfficientNet stages (e.g. features.6 & features.7),
+        keeping earlier stages frozen. CBAM/fusion/head are already trainable. Fine-tuning just
+        the deep stages adapts high-level features to MRI without disturbing the low-level
+        (edge/texture) filters that transfer well from ImageNet."""
+        for p in self.features.parameters():
+            p.requires_grad = False
+        keep = {f"features.{7 - i}" for i in range(n)}   # n=2 -> {'features.7', 'features.6'}
+        for name, p in self.features.named_parameters():
+            stage = ".".join(name.split(".")[:2])         # e.g. 'features.6'
+            if stage in keep:
+                p.requires_grad = True
+        return keep
 
 
 def count_params(model):
