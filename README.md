@@ -151,7 +151,7 @@ The project is built one verifiable phase at a time; each must run on the RTX 40
 - [x] **Phase 0** — repo scaffold: folders, `config.py`, `requirements.txt`, `.gitignore`, `README.md`
 - [x] **Phase 1** — `datasets.py` + `preprocessing.py` (load Nickparvar; `01_data_explore.ipynb`)
 - [x] **Phase 2** — `cbam.py` + `model.py` (multi-scale backbone; forward-pass shape check)
-- [ ] **Phase 3** — `losses.py` + `train.py` (Focal Loss + Stage-1 loop, AMP + checkpointing)
+- [x] **Phase 3** — `losses.py` + `train.py` (Focal Loss + Stage-1 loop, AMP + checkpointing)
 - [ ] **Phase 4** — `cbam_mask.py` + `radiomics_fusion.py`
 - [ ] **Phase 5** — `domain_adversarial.py` + multi-dataset training
 - [ ] **Phase 6** — `uncertainty.py` (EDL) + `conformal.py` + `ood.py`
