@@ -18,15 +18,18 @@ import torch
 # ---------------------------------------------------------------------------
 # 1. THE MASTER SWITCH
 # ---------------------------------------------------------------------------
-# "local" -> RTX 4050 6GB. Tiny batches, 2 epochs, one dataset, heavy modules
-#            (diffusion / radiomics on full data) OFF. Purpose: DEBUG that the
-#            code runs end-to-end without crashing.
-# "cloud" -> rented GPU. Full batches, full epochs, all datasets, everything ON.
+# "local"      -> RTX 4050 6GB. Tiny batches, 2 epochs, one dataset, heavy modules OFF.
+#                 Purpose: DEBUG that the code runs end-to-end without crashing.
+# "local_full" -> RTX 4050 but the REAL run: ALL Nickparvar data, full epochs, heavy modules
+#                 still OFF (no HD-BET/pyradiomics). Use for the headline-accuracy run.
+# "cloud"      -> rented GPU. Full batches, full epochs, all datasets, everything ON.
 #
-# Change ONLY this line when you move between machines.
-MACHINE = "local"
+# Set via the CERTIFY_MACHINE env var (default "local") so you never edit this file to launch a
+# big run. In PowerShell:  $env:CERTIFY_MACHINE="local_full"; python train.py --stage 1
+MACHINE = os.environ.get("CERTIFY_MACHINE", "local")
 
-assert MACHINE in ("local", "cloud"), f"MACHINE must be 'local' or 'cloud', got {MACHINE!r}"
+assert MACHINE in ("local", "local_full", "cloud"), \
+    f"MACHINE must be 'local', 'local_full', or 'cloud', got {MACHINE!r}"
 
 # ---------------------------------------------------------------------------
 # 2. DEVICE
@@ -109,6 +112,17 @@ _MODE = {
         "STAGE1_EPOCHS":     2,      # just enough to prove the loop works
         "STAGE2_EPOCHS":     1,
         "LIMIT_SAMPLES":     200,    # cap dataset size for a fast smoke test
+    },
+    "local_full": {                  # the REAL run on the 4050: full Nickparvar, full epochs
+        "BATCH_SIZE":        16,     # VRAM-probed safe (Stage 2 peaks < 1GB at this size)
+        "ACCUM_STEPS":       2,      # effective batch 32
+        "NUM_WORKERS":       0,      # 0 = rock-solid on Windows for an unattended run
+        "USE_AMP":           True,
+        "DATASETS":          ["nickparvar"],   # only dataset we have locally
+        "HEAVY_MODULES":     False,  # no pyradiomics/SHAP/HD-BET on 6GB
+        "STAGE1_EPOCHS":     15,
+        "STAGE2_EPOCHS":     12,
+        "LIMIT_SAMPLES":     None,   # ALL the data
     },
     "cloud": {
         "BATCH_SIZE":        32,

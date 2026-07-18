@@ -143,6 +143,21 @@ python config.py
 
 ---
 
+## Run the full training
+
+The debug config (`MACHINE="local"`) runs 200 images / 2 epochs to prove the code works. For the
+real headline-accuracy run on the RTX 4050 — all Nickparvar data, full 15 + 12 epochs — set
+`local_full` via the env var and run both stages:
+
+```powershell
+$env:CERTIFY_MACHINE="local_full"
+.\venv\Scripts\python.exe train.py --stage 1; if ($?) { .\venv\Scripts\python.exe train.py --stage 2 }
+```
+
+Each stage checkpoints every epoch to `checkpoints/` and prints TEST accuracy + per-class recall
+at the end. Stage 2 resumes from `stage1_best.pth`. (Single dataset -> Stage 2 is plain
+fine-tuning; domain-adversarial turns on automatically with >= 2 datasets on the cloud.)
+
 ## Build roadmap
 
 The project is built one verifiable phase at a time; each must run on the RTX 4050 in
