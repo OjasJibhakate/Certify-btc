@@ -149,7 +149,7 @@ The project is built one verifiable phase at a time; each must run on the RTX 40
 `local` mode before moving on.
 
 - [x] **Phase 0** — repo scaffold: folders, `config.py`, `requirements.txt`, `.gitignore`, `README.md`
-- [ ] **Phase 1** — `datasets.py` + `preprocessing.py` (load Nickparvar; explore notebook)
+- [x] **Phase 1** — `datasets.py` + `preprocessing.py` (load Nickparvar; `01_data_explore.ipynb`)
 - [ ] **Phase 2** — `cbam.py` + `model.py` (multi-scale backbone; forward-pass shape check)
 - [ ] **Phase 3** — `losses.py` + `train.py` (Focal Loss + Stage-1 loop, AMP + checkpointing)
 - [ ] **Phase 4** — `cbam_mask.py` + `radiomics_fusion.py`
