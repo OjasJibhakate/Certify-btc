@@ -1,11 +1,15 @@
 # CERTIFY-BTC dependencies
 # -------------------------------------------------------------------
 # Install order matters for one thing: install PyTorch FIRST, matched to
-# your CUDA version, from the official site. The line below is the CUDA 12.1
-# build that works on the RTX 4050. If `python -c "import torch;print(torch.cuda.is_available())"`
+# your CUDA version, from the official site. Your RTX 4050 driver supports
+# CUDA 12.6, so we use the cu126 channel (this is the build that already works
+# on your machine). If `python -c "import torch;print(torch.cuda.is_available())"`
 # prints False, you installed the CPU build — reinstall from pytorch.org.
 #
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#
+# NOTE: use Python 3.11 (not 3.13). The radiomics/medical-imaging stack below
+# has clean 3.11 wheels; 3.13 breaks pyradiomics. See README "Setup".
 #
 # The rest of this file is installed the normal way: pip install -r requirements.txt
 
@@ -27,8 +31,14 @@ albumentations>=1.4         # augmentations
 SimpleITK>=2.3              # N4 bias-field correction, NIfTI I/O
 nibabel>=5.2               # read BraTS / TCGA .nii volumes
 
-# --- Radiomics (Phase 4) ---
-pyradiomics>=3.1           # 107 hand-crafted features on the pseudo-masked region
+# --- Radiomics (Phase 4) — DEFERRED, do not install yet ---
+# pyradiomics is unmaintained and its wheels are fragile. It is NOT needed until
+# Phase 4, and installing it here would block the whole file. When you reach
+# Phase 4 (on Python 3.11) install it on its own so a failure is isolated:
+#     pip install pyradiomics==3.1.0
+# If that fails to build on Windows, tell me — we'll use a prebuilt wheel or a
+# conda-forge install just for this one package.
+# pyradiomics==3.1.0       # 107 hand-crafted features on the pseudo-masked region
 
 # --- Explainability (Phase 7) ---
 grad-cam>=1.5              # pip package name: grad-cam  (import: pytorch_grad_cam)

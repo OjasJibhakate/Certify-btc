@@ -117,13 +117,19 @@ CERTIFY_BTC/
 
 ## Setup
 
-```bash
-# 1. Create and activate a virtual environment (Windows PowerShell)
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+> Use **Python 3.11**, not 3.13. The radiomics / medical-imaging stack (pyradiomics,
+> SimpleITK) has clean wheels on 3.11 but breaks on 3.13.
 
-# 2. Install PyTorch matched to your CUDA (RTX 4050 -> CUDA 12.1 build)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```powershell
+# 1. Create the venv with Python 3.11 and activate it (Windows PowerShell).
+#    Replace the path if your 3.11 lives elsewhere: find it with `py --list`.
+& "C:\Users\VICTUS\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe" -m venv venv
+.\venv\Scripts\Activate.ps1
+python --version                      # should print 3.11.15
+
+# 2. Install PyTorch matched to your CUDA (RTX 4050 driver supports CUDA 12.6)
+pip install --upgrade pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 # 3. Install the rest
 pip install -r requirements.txt
