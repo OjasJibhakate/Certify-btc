@@ -155,8 +155,8 @@ The project is built one verifiable phase at a time; each must run on the RTX 40
 - [x] **Phase 4** — `cbam_mask.py` (attention→brain-confined pseudo-mask) + `radiomics_fusion.py` (skimage features→PCA32→fuse)
 - [x] **Phase 5** — `domain_adversarial.py` (GRL + domain head) + Stage-2 loop (`train.py --stage 2`); mechanism verified locally, real multi-dataset on cloud
 - [x] **Phase 6** — `uncertainty.py` (Evidential DL + MC-Dropout) + `conformal.py` (RAPS) + `ood.py` (energy); OOD needs the fully-trained model to validate
-- [ ] **Phase 7** — `xai.py` + `counterfactual.py`
-- [ ] **Phase 8** — full results notebook + ablation study
+- [x] **Phase 7** — `xai.py` (Grad-CAM + LIME consensus + Dice; SHAP cloud-only on 6GB) + `counterfactual.py`
+- [ ] **Phase 8** — full results notebook + ablation study *(needs the full training run)*
 
 ---
 
