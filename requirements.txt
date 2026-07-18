@@ -1,0 +1,51 @@
+# CERTIFY-BTC dependencies
+# -------------------------------------------------------------------
+# Install order matters for one thing: install PyTorch FIRST, matched to
+# your CUDA version, from the official site. The line below is the CUDA 12.1
+# build that works on the RTX 4050. If `python -c "import torch;print(torch.cuda.is_available())"`
+# prints False, you installed the CPU build — reinstall from pytorch.org.
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# The rest of this file is installed the normal way: pip install -r requirements.txt
+
+# --- Core deep learning ---
+torch>=2.2
+torchvision>=0.17
+
+# --- Numerics / data ---
+numpy>=1.24
+pandas>=2.0
+scipy>=1.11
+scikit-learn>=1.3
+
+# --- Image / medical imaging ---
+pillow>=10.0
+opencv-python>=4.8
+scikit-image>=0.22          # Otsu threshold, morphology for the CBAM pseudo-mask
+albumentations>=1.4         # augmentations
+SimpleITK>=2.3              # N4 bias-field correction, NIfTI I/O
+nibabel>=5.2               # read BraTS / TCGA .nii volumes
+
+# --- Radiomics (Phase 4) ---
+pyradiomics>=3.1           # 107 hand-crafted features on the pseudo-masked region
+
+# --- Explainability (Phase 7) ---
+grad-cam>=1.5              # pip package name: grad-cam  (import: pytorch_grad_cam)
+lime>=0.2
+shap>=0.44
+
+# --- Plotting / notebooks ---
+matplotlib>=3.8
+seaborn>=0.13
+tqdm>=4.66
+jupyter>=1.0
+ipykernel>=6.29
+
+# -------------------------------------------------------------------
+# NOT pip-installable here — install separately when you reach these phases:
+#
+#   HD-BET (skull stripping, Phase 1 cloud): a GitHub package, install with
+#     pip install git+https://github.com/MIC-DKFZ/HD-BET
+#   It downloads model weights on first run and wants a GPU. Cloud-only.
+# -------------------------------------------------------------------

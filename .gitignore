@@ -1,0 +1,48 @@
+# -------------------------------------------------------------------
+# CERTIFY-BTC .gitignore
+# Golden rule: NEVER commit data or model weights. They are huge, often
+# license-restricted (patient MRIs!), and blow past GitHub's file limits.
+# -------------------------------------------------------------------
+
+# --- Datasets (place your MRIs here locally; keep them off GitHub) ---
+data/
+*.nii
+*.nii.gz
+*.dcm
+
+# --- Model weights / checkpoints ---
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# --- Training artifacts ---
+logs/
+runs/
+wandb/
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Notebook output can be huge; keep the checkpoints folder shape only ---
+# (We keep an empty checkpoints/ via .gitkeep but ignore its contents above.)
+!checkpoints/.gitkeep
+!data/.gitkeep
