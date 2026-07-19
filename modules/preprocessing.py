@@ -51,20 +51,34 @@ def apply_clahe(gray, clip_limit=2.0, tile_grid=8):
     return clahe.apply(gray)
 
 
-def _augment(gray, rng):
-    """Light, label-preserving augmentation for TRAINING only.
+def _augment_geometry(gray, rng):
+    """Geometry augmentation (applied BEFORE CLAHE) — flip, rotate, scale, occasional blur.
 
-    Axial brain MRI is roughly left-right symmetric, so a horizontal flip yields a
-    plausible new brain. A small rotation simulates slight head tilt. We keep both
-    mild so tumor morphology is never distorted into something unrealistic.
+    Wider than the Phase-1 version: it exposes the model to more tumor poses and scales, which
+    directly targets the train->test generalization gap (glioma especially). Still label-
+    preserving — axial brain MRI is roughly L-R symmetric and a small tilt/zoom is realistic.
     """
-    if rng.random() < 0.5:
-        gray = cv2.flip(gray, 1)  # horizontal flip
-    angle = rng.uniform(-10, 10)  # degrees of head tilt
     h, w = gray.shape
-    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, 1.0)
+    if rng.random() < 0.5:
+        gray = cv2.flip(gray, 1)                        # horizontal flip
+    angle = rng.uniform(-15, 15)                        # head tilt (was ±10)
+    scale = rng.uniform(0.9, 1.1)                       # zoom in/out a little
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
     gray = cv2.warpAffine(gray, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+    if rng.random() < 0.3:                              # mimic acquisition softness
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
     return gray
+
+
+def _augment_intensity(gray, rng):
+    """Intensity augmentation (applied AFTER CLAHE, so CLAHE can't equalize it away) —
+    brightness / contrast / gamma jitter to mimic scanner-to-scanner intensity differences,
+    a likely driver of the glioma train->test shift."""
+    g = gray.astype(np.float32)
+    g = g * rng.uniform(0.8, 1.2) + rng.uniform(-20, 20)     # contrast * x + brightness
+    gamma = rng.uniform(0.8, 1.25)                            # non-linear tone shift
+    g = 255.0 * np.clip(g / 255.0, 0.0, 1.0) ** gamma
+    return np.clip(g, 0, 255).astype(np.uint8)
 
 
 def preprocess_image(path, img_size=None, use_clahe=None, augment=False, rng=None):
@@ -79,13 +93,18 @@ def preprocess_image(path, img_size=None, use_clahe=None, augment=False, rng=Non
     if gray is None:
         raise FileNotFoundError(f"Could not read image: {path}")
 
-    # 2. Optional training augmentation (done before contrast/resize).
+    # 2. Optional GEOMETRY augmentation (before CLAHE).
     if augment:
-        gray = _augment(gray, rng if rng is not None else np.random.default_rng())
+        rng = rng if rng is not None else np.random.default_rng()
+        gray = _augment_geometry(gray, rng)
 
     # 3. Local contrast enhancement.
     if use_clahe:
         gray = apply_clahe(gray)
+
+    # 3b. Optional INTENSITY augmentation (after CLAHE, so it isn't equalized away).
+    if augment:
+        gray = _augment_intensity(gray, rng)
 
     # 4. Resize. INTER_AREA is the best resampler when SHRINKING an image.
     gray = cv2.resize(gray, (img_size, img_size), interpolation=cv2.INTER_AREA)
